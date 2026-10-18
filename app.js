@@ -1,75 +1,35 @@
-const KEY='plu-listan-v1';
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
+import {getFirestore,collection,onSnapshot,addDoc,updateDoc,deleteDoc,doc,writeBatch,getDocs} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+
+const firebaseConfig={apiKey:'AIzaSyBXLuwnoD2psDBehkWxxCWoKBqvnXd9UOs',authDomain:'plu-listan.firebaseapp.com',projectId:'plu-listan',storageBucket:'plu-listan.firebasestorage.app',messagingSenderId:'169537849894',appId:'1:169537849894:web:98134cb4d85d242c3bf4e7'};
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
 const $=id=>document.getElementById(id);
-let articles=[];let editing=null;
-try {const stored=JSON.parse(localStorage.getItem(KEY)||'[]');if(Array.isArray(stored))articles=stored.filter(a=>a&&typeof a.name==='string'&&typeof a.plu==='string'&&typeof a.id==='string');}catch(e){alert('Kunde inte läsa sparade artiklar.');}
-const save=()=>localStorage.setItem(KEY,JSON.stringify(articles));
-function render(){const query=$('search').value.trim().toLocaleLowerCase('sv');const results=articles.filter(a=>a.name.toLocaleLowerCase('sv').includes(query)||a.plu.includes(query)).sort((a,b)=>a.name.localeCompare(b.name,'sv'));$('count').textContent=articles.length;$('shown').textContent=`${results.length} visas`;const list=$('list');list.replaceChildren();if(!results.length){const empty=document.createElement('div');empty.className='empty';const title=document.createElement('strong');title.textContent=articles.length?'Inga träffar':'Inga artiklar ännu';const detail=document.createElement('span');detail.textContent=articles.length?'Prova ett annat sökord.':'Lägg till din första artikel för att börja.';empty.append(title,detail);list.append(empty);return;}for(const article of results){const row=document.createElement('div');row.className='item';const info=document.createElement('div');info.className='item-info';const name=document.createElement('div');name.className='item-name';name.textContent=article.name;const code=document.createElement('div');code.className='item-code';code.append('PLU  ');const b=document.createElement('b');b.textContent=article.plu;code.append(b);info.append(name,code);const edit=document.createElement('button');edit.className='edit';edit.textContent='Ändra';edit.setAttribute('aria-label','Ändra '+article.name);edit.onclick=()=>openEditor(article);const del=document.createElement('button');del.className='delete';del.textContent='×';del.setAttribute('aria-label','Ta bort '+article.name);del.onclick=()=>{if(confirm(`Ta bort ${article.name}?`)){articles=articles.filter(a=>a.id!==article.id);save();render();}};row.append(info,edit,del);list.append(row);}}
-function openEditor(article=null){editing=article?.id??null;$('form-title').textContent=article?'Redigera artikel':'Ny artikel';$('name').value=article?.name??'';$('plu').value=article?.plu??'';$('editor').showModal();$('name').focus();}
-$('add').onclick=()=>openEditor();$('close').onclick=$('cancel').onclick=()=>$('editor').close();const searchInput=$('search');const clearSearch=$('clear-search');function updateClearSearch(){clearSearch.hidden=!searchInput.value;}searchInput.addEventListener('input',()=>{updateClearSearch();render();});clearSearch.onclick=()=>{searchInput.value='';updateClearSearch();render();searchInput.focus();};updateClearSearch();
-// Dublettkontroll gäller både när artiklar skapas och redigeras.
-let pendingChange=null;
-const duplicateDialog=$('duplicate-dialog');
-function persist(next){
-  const previous=articles;
-  articles=next;
-  try{save();render();$('editor').close();duplicateDialog.close();pendingChange=null;}
-  catch(e){articles=previous;alert('Det gick inte att spara. Kontrollera telefonens lagringsutrymme.');}
-}
-function applyChange(name,plu,replaceId=null){
-  let next;
-  if(replaceId){
-    // Vid redigering tas den redigerade posten bort om ett annat PLU-objekt ersätts.
-    next=articles.filter(a=>a.id!==editing || a.id===replaceId)
-      .map(a=>a.id===replaceId?{...a,name,plu}:a);
-  }else if(editing){
-    next=articles.map(a=>a.id===editing?{...a,name,plu}:a);
-  }else{
-    next=[...articles,{id:crypto.randomUUID(),name,plu}];
-  }
-  persist(next);
-}
-$('form').addEventListener('submit',event=>{
-  event.preventDefault();
-  const name=$('name').value.trim();
-  const plu=$('plu').value.trim();
-  if(!name||!/^[0-9]{1,12}$/.test(plu))return;
-  const others=articles.filter(a=>a.id!==editing);
-  // Förhindra exakt samma namn och PLU, oavsett stora/små bokstäver.
-  const exact=others.find(a=>a.plu===plu&&a.name.toLocaleLowerCase('sv')===name.toLocaleLowerCase('sv'));
-  if(exact){alert(`Artikeln ”${exact.name}” med PLU ${plu} finns redan.`);return;}
-  const matches=others.filter(a=>a.plu===plu);
-  if(matches.length){
-    pendingChange={name,plu,matches};
-    $('duplicate-description').textContent=`PLU ${plu} används redan av ${matches.map(a=>a.name).join(', ')}. Vad vill du göra?`;
-    // Vid flera träffar får användaren välja vilken artikel som ska ersättas.
-    const replace=$('duplicate-replace');
-    replace.textContent=matches.length===1?'Uppdatera befintlig artikel':'Välj artikel att uppdatera';
-    duplicateDialog.showModal();
-    return;
-  }
-  applyChange(name,plu);
-});
-$('duplicate-cancel').onclick=()=>{duplicateDialog.close();pendingChange=null;};
-$('duplicate-keep').onclick=()=>{
-  if(!pendingChange)return;
-  const {name,plu}=pendingChange;
-  applyChange(name,plu);
-};
-$('duplicate-replace').onclick=()=>{
-  if(!pendingChange)return;
-  const {name,plu,matches}=pendingChange;
-  let target=matches[0];
-  if(matches.length>1){
-    const options=matches.map((a,i)=>`${i+1}. ${a.name}`).join('\n');
-    const selection=prompt(`Vilken artikel vill du uppdatera?\n${options}\n\nSkriv numret i listan:`);
-    if(selection===null)return;
-    const n=Number(selection);
-    if(!Number.isInteger(n)||n<1||n>matches.length){alert('Välj ett giltigt nummer.');return;}
-    target=matches[n-1];
-  }
-  applyChange(name,plu,target.id);
-};
-duplicateDialog.addEventListener('close',()=>{pendingChange=null;});
-$('export').onclick=()=>{const blob=new Blob([JSON.stringify(articles,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='plu-artiklar.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-$('import').onclick=()=>$('file').click();$('file').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const data=JSON.parse(await file.text());if(!Array.isArray(data)||!data.every(a=>a&&typeof a.name==='string'&&a.name.trim()&&a.name.length<=80&&typeof a.plu==='string'&&/^[0-9]{1,12}$/.test(a.plu)))throw Error('Ogiltigt filformat');if(!confirm(`Importera ${data.length} artiklar? Din nuvarande lista ersätts.`))return;const previous=articles;articles=data.map(a=>({id:crypto.randomUUID(),name:a.name,plu:a.plu}));try{save();render();}catch(err){articles=previous;throw err;}}catch(err){alert('Kunde inte importera filen: '+err.message);}finally{e.target.value='';}};
-if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));render();
+const COLLECTIONS={plu:'plu-artiklar',other:'ovriga-artiklar'};
+const LEGACY_KEY='plu-listan-v1';
+let tab='plu',user=null,articles={plu:[],other:[]},ready={plu:false,other:false},editing=null,pending=null,busy=false;
+const setStatus=(message,error=false)=>{$('status').textContent=message;$('status').classList.toggle('error',error);};
+const listFor=()=>articles[tab];
+const collectionFor=(t=tab)=>collection(db,COLLECTIONS[t]);
+function updateAuthUI(){const logged=!!user;$('login-toggle').textContent=logged?'Logga ut':'Logga in';$('add').hidden=!logged;$('admin-tools').hidden=!logged;let legacy=[];try{legacy=JSON.parse(localStorage.getItem(LEGACY_KEY)||'[]');}catch{}$('import-local').hidden=!logged||!Array.isArray(legacy)||!legacy.length;render();}
+function render(){const query=$('search').value.trim().toLocaleLowerCase('sv');const current=listFor();const results=current.filter(a=>a.name.toLocaleLowerCase('sv').includes(query)||a.plu.includes(query)).sort((a,b)=>a.name.localeCompare(b.name,'sv'));
+$('shown').textContent=`${results.length} visas`;$('list-title').textContent=tab==='plu'?'PLU-artiklar':'Övriga artiklar';$('search').placeholder=tab==='plu'?'Sök artikel eller PLU…':'Sök artikel eller artikelnummer…';const list=$('list');list.replaceChildren();if(!results.length){const empty=document.createElement('div');empty.className='empty';const strong=document.createElement('strong');strong.textContent=!ready[tab]?'Hämtar artiklar…':current.length?'Inga träffar':'Inga artiklar ännu';const small=document.createElement('span');small.textContent=current.length?'Prova ett annat sökord.':'Artiklarna visas här när de har lagts till.';empty.append(strong,small);list.append(empty);return;}
+for(const a of results){const row=document.createElement('div');row.className='item';const info=document.createElement('div');info.className='item-info';const name=document.createElement('div');name.className='item-name';name.textContent=a.name;const code=document.createElement('div');code.className='item-code';code.append(tab==='plu'?'PLU ':'Artikelnummer ');const bold=document.createElement('b');bold.textContent=a.plu;code.append(bold);info.append(name,code);row.append(info);if(user){const edit=document.createElement('button');edit.className='edit';edit.textContent='Ändra';edit.onclick=()=>openEditor(a);const del=document.createElement('button');del.className='delete';del.textContent='×';del.setAttribute('aria-label',`Ta bort ${a.name}`);del.onclick=async()=>{if(!confirm(`Ta bort ${a.name}?`))return;try{await deleteDoc(doc(db,COLLECTIONS[tab],a.id));}catch(e){alert('Kunde inte ta bort artikeln: '+e.message);}};row.append(edit,del);}list.append(row);}}
+for(const button of document.querySelectorAll('[data-tab]'))button.addEventListener('click',()=>{tab=button.dataset.tab;for(const b of document.querySelectorAll('[data-tab]')){const active=b.dataset.tab===tab;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));}$('search').value='';updateClear();render();});
+const search=$('search'),clear=$('clear-search');function updateClear(){clear.hidden=!search.value;}search.addEventListener('input',()=>{updateClear();render();});clear.onclick=()=>{search.value='';updateClear();render();search.focus();};
+for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>$(button.dataset.close).close();
+$('login-toggle').onclick=async()=>{if(user){if(confirm('Vill du logga ut?'))await signOut(auth);return;}$('login-error').textContent='';$('login-dialog').showModal();};
+$('login-form').onsubmit=async event=>{event.preventDefault();$('login-error').textContent='';const submit=event.target.querySelector('[type=submit]');submit.disabled=true;try{await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value);$('password').value='';$('login-dialog').close();}catch(e){$('login-error').textContent='Inloggningen misslyckades. Kontrollera e-post och lösenord.';}finally{submit.disabled=false;}};
+onAuthStateChanged(auth,current=>{user=current;updateAuthUI();});
+for(const t of ['plu','other'])onSnapshot(collectionFor(t),snapshot=>{articles[t]=snapshot.docs.map(d=>({id:d.id,name:String(d.data().name??''),plu:String(d.data().plu??d.data().artikelnummer??'')}));ready[t]=true;if(t===tab)render();setStatus(navigator.onLine?'Synkroniserad med Firebase':'Offline – visar senast hämtade uppgifter');},error=>{ready[t]=true;setStatus('Kunde inte läsa Firebase. Kontrollera säkerhetsregler och anslutning.',true);console.error(error);if(t===tab)render();});
+window.addEventListener('offline',()=>setStatus('Offline – uppdateringar kräver internet'));window.addEventListener('online',()=>setStatus('Ansluter till Firebase…'));
+function openEditor(article=null){if(!user)return;editing=article?.id??null;$('form-title').textContent=article?'Redigera artikel':'Ny artikel';$('name').value=article?.name??'';$('plu').value=article?.plu??'';$('code-label').firstChild.textContent=tab==='plu'?'PLU-nummer':'Artikelnummer';$('edit-error').textContent='';$('editor').showModal();$('name').focus();}
+$('add').onclick=()=>openEditor();
+async function commitChange(name,plu,replaceId=null){if(busy||!user)return;busy=true;const active=tab;try{if(replaceId){const batch=writeBatch(db);batch.update(doc(db,COLLECTIONS[active],replaceId),{name,plu});if(editing&&editing!==replaceId)batch.delete(doc(db,COLLECTIONS[active],editing));await batch.commit();}else if(editing){await updateDoc(doc(db,COLLECTIONS[active],editing),{name,plu});}else{await addDoc(collectionFor(active),{name,plu});}$('editor').close();$('duplicate-dialog').close();pending=null;}catch(e){$('edit-error').textContent='Kunde inte spara: '+e.message;alert('Kunde inte spara ändringen. Kontrollera internet och behörighet.');}finally{busy=false;}}
+$('form').onsubmit=async event=>{event.preventDefault();if(busy)return;const name=$('name').value.trim(),plu=$('plu').value.trim();if(!name||!/^[0-9]{1,20}$/.test(plu))return;const others=listFor().filter(a=>a.id!==editing);const exact=others.find(a=>a.plu===plu&&a.name.toLocaleLowerCase('sv')===name.toLocaleLowerCase('sv'));if(exact){$('edit-error').textContent=`Artikeln ”${exact.name}” med nummer ${plu} finns redan.`;return;}const matches=others.filter(a=>a.plu===plu);if(matches.length){pending={name,plu,matches};$('duplicate-description').textContent=`Nummer ${plu} används redan av ${matches.map(a=>a.name).join(', ')}. Vad vill du göra?`;$('duplicate-replace').textContent=matches.length===1?'Uppdatera befintlig artikel':'Välj artikel att uppdatera';$('duplicate-dialog').showModal();return;}await commitChange(name,plu);};
+$('duplicate-cancel').onclick=()=>{$('duplicate-dialog').close();pending=null;};$('duplicate-keep').onclick=async()=>{if(pending)await commitChange(pending.name,pending.plu);};$('duplicate-replace').onclick=async()=>{if(!pending)return;const {name,plu,matches}=pending;let target=matches[0];if(matches.length>1){const answer=prompt(`Vilken artikel vill du uppdatera?\n${matches.map((a,i)=>`${i+1}. ${a.name}`).join('\n')}\n\nSkriv numret:`);if(answer===null)return;const n=Number(answer);if(!Number.isInteger(n)||n<1||n>matches.length){alert('Välj ett giltigt nummer.');return;}target=matches[n-1];}await commitChange(name,plu,target.id);};$('duplicate-dialog').addEventListener('close',()=>{pending=null;});
+$('export').onclick=()=>{const data=listFor().map(({name,plu})=>({name,plu}));const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=tab==='plu'?'plu-artiklar.json':'ovriga-artiklar.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);};
+async function mergeImport(data){if(!user)throw Error('Logga in som administratör först.');if(!Array.isArray(data)||!data.every(a=>a&&typeof a.name==='string'&&a.name.trim()&&a.name.length<=80&&typeof a.plu==='string'&&/^[0-9]{1,20}$/.test(a.plu)))throw Error('Ogiltigt filformat.');const existing=await getDocs(collectionFor());const known=new Set(existing.docs.map(d=>`${String(d.data().name??'').trim().toLocaleLowerCase('sv')}|${String(d.data().plu??'')}`));const fresh=[];for(const a of data){const key=`${a.name.trim().toLocaleLowerCase('sv')}|${a.plu}`;if(!known.has(key)){known.add(key);fresh.push({name:a.name.trim(),plu:a.plu});}}if(!fresh.length){alert('Alla artiklar finns redan i databasen.');return;}if(!confirm(`Lägg till ${fresh.length} nya artiklar i ${tab==='plu'?'PLU-listan':'Övriga artiklar'}? Befintliga artiklar behålls.`))return;for(let i=0;i<fresh.length;i+=400){const batch=writeBatch(db);for(const a of fresh.slice(i,i+400))batch.set(doc(collectionFor()),a);await batch.commit();}alert(`${fresh.length} artiklar importerades.`);}
+$('import').onclick=()=>$('file').click();$('file').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;try{await mergeImport(JSON.parse(await file.text()));}catch(err){alert('Importen misslyckades: '+err.message);}finally{e.target.value='';}};
+$('import-local').onclick=async()=>{try{const old=JSON.parse(localStorage.getItem(LEGACY_KEY)||'[]');if(tab!=='plu'){alert('Växla till PLU-listan först.');return;}await mergeImport(old);}catch(e){alert('Kunde inte flytta artiklar: '+e.message);}};
+if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.error));render();
